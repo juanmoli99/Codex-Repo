@@ -15,7 +15,7 @@ jobs:
   codeql:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
@@ -24,7 +24,7 @@ jobs:
   filesystem-and-container:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: fs
@@ -57,7 +57,7 @@ jobs:
             context: infra/backup
             file: infra/backup/Dockerfile
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: docker build --pull --tag aegis-${{ matrix.component }}:security --file ${{ matrix.file }} ${{ matrix.context }}
       - uses: aquasecurity/trivy-action@0.35.0
         with:

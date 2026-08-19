@@ -29,7 +29,7 @@ jobs:
       CI: true
       DATABASE_URL: postgresql://aegis:ci-only-password@127.0.0.1:5432/aegis_ci?schema=public
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with: { version: 11.20.0 }
       - uses: actions/setup-node@v5
@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: gitleaks/gitleaks-action@v2
         env:
