@@ -1,0 +1,1414 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum OperationalState {
+  READY
+  DEGRADED
+  BLOCKED
+  EMERGENCY
+}
+
+enum TradingMode {
+  PAPER
+  LIVE
+}
+
+enum AuditSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum SessionState {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum BackupState {
+  STARTED
+  COMPLETED
+  VERIFIED
+  FAILED
+  EXPIRED
+}
+
+enum MarketDataHealth {
+  HEALTHY
+  STALE
+  UNAVAILABLE
+  INCONSISTENT
+}
+
+enum CorporateActionState {
+  PENDING
+  EFFECTIVE
+  RECONCILING
+  RECONCILED
+  AMBIGUOUS
+}
+
+enum EventTiming {
+  PRE_MARKET
+  POST_MARKET
+  DURING_MARKET
+  UNKNOWN
+}
+
+enum StrategyLifecycle {
+  ACTIVE
+  RETIRING
+  DISABLED
+}
+
+enum StrategySignalType {
+  BUY
+  SELL
+  HOLD
+  EXIT
+}
+
+enum StrategySignalState {
+  ACTIVE
+  EXPIRED
+  INVALIDATED
+  CONSUMED
+}
+
+enum ScannerExecutionStatus {
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum RiskDecisionOutcome {
+  APPROVED
+  REJECTED
+}
+
+enum SafetyMode {
+  NORMAL
+  ONLY_CLOSE
+  KILL_SWITCH
+  EMERGENCY_STOP
+}
+
+enum TradeIntentState {
+  CREATED
+  VALIDATING
+  APPROVED
+  EXECUTING
+  SUBMITTED
+  REJECTED
+  UNKNOWN
+  COMPLETED
+}
+
+enum OrderLifecycleState {
+  CREATED
+  VALIDATING
+  APPROVED
+  SUBMITTING
+  SUBMITTED
+  ACCEPTED
+  PARTIALLY_FILLED
+  FILLED
+  CANCEL_PENDING
+  CANCELED
+  REJECTED
+  EXPIRED
+  REPLACED
+  UNKNOWN
+}
+
+enum SchedulerRunState {
+  STOPPED
+  RUNNING
+  PAUSED
+  BLOCKED
+}
+
+enum ReconciliationRunState {
+  RUNNING
+  MATCHED
+  CORRECTED
+  BLOCKED
+  FAILED
+}
+
+enum AlertState {
+  PENDING
+  SENT
+  FAILED
+  ACKNOWLEDGED
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+  EMERGENCY
+}
+
+enum LiveReadinessState {
+  NOT_READY
+  READY_FOR_ACTIVATION
+  ACTIVE
+  REVOKED
+}
+
+model SystemStateRecord {
+  id           String           @id @default("singleton")
+  state        OperationalState @default(BLOCKED)
+  tradingMode  TradingMode      @default(PAPER)
+  reasonCode   String
+  reasonDetail String?
+  changedBy    String
+  version      Int              @default(0)
+  createdAt    DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime         @updatedAt @db.Timestamptz(6)
+
+  @@map("system_state")
+}
+
+model DistributedLock {
+  name         String   @id
+  ownerId      String
+  fencingToken BigInt   @default(autoincrement())
+  acquiredAt   DateTime @default(now()) @db.Timestamptz(6)
+  heartbeatAt  DateTime @default(now()) @db.Timestamptz(6)
+  expiresAt    DateTime @db.Timestamptz(6)
+  metadata     Json?
+
+  @@index([expiresAt])
+  @@map("distributed_locks")
+}
+
+model Operator {
+  id                  String       @id @default(uuid()) @db.Uuid
+  username            String       @unique @db.VarChar(128)
+  passwordHash        String       @db.VarChar(512)
+  active              Boolean      @default(true)
+  failedLoginCount    Int          @default(0)
+  lockedUntil         DateTime?    @db.Timestamptz(6)
+  passwordChangedAt   DateTime     @default(now()) @db.Timestamptz(6)
+  lastSuccessfulLogin DateTime?    @db.Timestamptz(6)
+  version             Int          @default(0)
+  createdAt           DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime     @updatedAt @db.Timestamptz(6)
+  sessions            Session[]
+  auditEvents         AuditEvent[]
+
+  @@map("operators")
+}
+
+model Session {
+  id            String       @id @default(uuid()) @db.Uuid
+  operatorId    String       @db.Uuid
+  tokenHash     String       @unique @db.Char(64)
+  csrfTokenHash String       @db.Char(64)
+  state         SessionState @default(ACTIVE)
+  ipAddress     String?      @db.VarChar(64)
+  userAgent     String?      @db.VarChar(512)
+  expiresAt     DateTime     @db.Timestamptz(6)
+  lastSeenAt    DateTime     @default(now()) @db.Timestamptz(6)
+  revokedAt     DateTime?    @db.Timestamptz(6)
+  createdAt     DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(6)
+  operator      Operator     @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@index([operatorId, state])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model AuditEvent {
+  id            String        @id @default(uuid()) @db.Uuid
+  operatorId    String?       @db.Uuid
+  severity      AuditSeverity
+  action        String        @db.VarChar(128)
+  resourceType  String        @db.VarChar(128)
+  resourceId    String?       @db.VarChar(256)
+  correlationId String        @db.Uuid
+  ipAddress     String?       @db.VarChar(64)
+  userAgent     String?       @db.VarChar(512)
+  outcome       String        @db.VarChar(64)
+  metadata      Json?
+  occurredAt    DateTime      @default(now()) @db.Timestamptz(6)
+  operator      Operator?     @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+
+  @@index([occurredAt])
+  @@index([correlationId])
+  @@index([resourceType, resourceId])
+  @@map("audit_events")
+}
+
+model ConfigurationSnapshot {
+  id            String      @id @default(uuid()) @db.Uuid
+  version       Int
+  environment   String      @db.VarChar(32)
+  tradingMode   TradingMode
+  checksum      String      @db.Char(64)
+  redactedValue Json
+  deployedAt    DateTime    @default(now()) @db.Timestamptz(6)
+
+  @@unique([environment, version])
+  @@index([checksum])
+  @@map("configuration_snapshots")
+}
+
+model PortfolioSnapshot {
+  id             String                   @id @default(uuid()) @db.Uuid
+  equity         Decimal                  @db.Decimal(20, 8)
+  cash           Decimal                  @db.Decimal(20, 8)
+  buyingPower    Decimal                  @db.Decimal(20, 8)
+  portfolioValue Decimal                  @db.Decimal(20, 8)
+  accountStatus  String                   @default("UNKNOWN") @db.VarChar(64)
+  daytradeCount  Int                      @default(0)
+  currency       String                   @db.Char(3)
+  brokerTime     DateTime                 @db.Timestamptz(6)
+  createdAt      DateTime                 @default(now()) @db.Timestamptz(6)
+  positions      PositionSnapshotRecord[]
+
+  @@index([createdAt])
+  @@map("portfolio_snapshots")
+}
+
+model PositionSnapshotRecord {
+  id                   String            @id @default(uuid()) @db.Uuid
+  portfolioSnapshotId  String            @db.Uuid
+  symbol               String            @db.VarChar(32)
+  side                 String            @db.VarChar(16)
+  quantity             Decimal           @db.Decimal(30, 12)
+  averageEntryPrice    Decimal           @db.Decimal(20, 8)
+  marketPrice          Decimal           @db.Decimal(20, 8)
+  marketValue          Decimal           @db.Decimal(20, 8)
+  costBasis            Decimal           @db.Decimal(20, 8)
+  unrealizedPnl        Decimal           @db.Decimal(20, 8)
+  realizedPnl          Decimal           @db.Decimal(20, 8)
+  pendingOrderExposure Decimal           @db.Decimal(20, 8)
+  strategyId           String?           @db.VarChar(128)
+  strategyVersion      String?           @db.VarChar(64)
+  unexpected           Boolean           @default(false)
+  orphaned             Boolean           @default(false)
+  createdAt            DateTime          @default(now()) @db.Timestamptz(6)
+  portfolioSnapshot    PortfolioSnapshot @relation(fields: [portfolioSnapshotId], references: [id], onDelete: Cascade)
+
+  @@index([portfolioSnapshotId, symbol])
+  @@map("position_snapshots")
+}
+
+model BackupRecord {
+  id             String      @id @default(uuid()) @db.Uuid
+  state          BackupState
+  objectKey      String      @unique @db.VarChar(1024)
+  checksum       String?     @db.Char(64)
+  sizeBytes      BigInt?
+  sourceHost     String      @db.VarChar(255)
+  offsite        Boolean     @default(false)
+  retentionUntil DateTime    @db.Timestamptz(6)
+  startedAt      DateTime    @default(now()) @db.Timestamptz(6)
+  completedAt    DateTime?   @db.Timestamptz(6)
+  verifiedAt     DateTime?   @db.Timestamptz(6)
+  error          String?
+  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime    @updatedAt @db.Timestamptz(6)
+
+  @@index([state, retentionUntil])
+  @@map("backup_records")
+}
+
+model BrokerRequestRecord {
+  id              String   @id @default(uuid()) @db.Uuid
+  correlationId   String   @db.Uuid
+  brokerRequestId String?  @db.VarChar(256)
+  service         String   @db.VarChar(32)
+  method          String   @db.VarChar(16)
+  path            String   @db.VarChar(512)
+  statusCode      Int?
+  latencyMs       Int
+  retryAttempt    Int      @default(1)
+  outcome         String   @db.VarChar(64)
+  occurredAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([correlationId])
+  @@index([brokerRequestId])
+  @@index([occurredAt])
+  @@map("broker_request_records")
+}
+
+model RegulatoryRuleVersion {
+  id             String    @id @db.VarChar(128)
+  regime         String    @db.VarChar(64)
+  effectiveFrom  DateTime  @db.Date
+  effectiveUntil DateTime? @db.Date
+  rules          Json
+  source         String    @db.VarChar(512)
+  checksum       String    @unique @db.Char(64)
+  active         Boolean   @default(false)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([effectiveFrom, effectiveUntil])
+  @@map("regulatory_rule_versions")
+}
+
+model MarketDataStateRecord {
+  symbol             String           @id @db.VarChar(32)
+  health             MarketDataHealth @default(UNAVAILABLE)
+  lastValidTimestamp DateTime?        @db.Timestamptz(6)
+  lastBarAt          DateTime?        @db.Timestamptz(6)
+  lastQuoteAt        DateTime?        @db.Timestamptz(6)
+  lastTradeAt        DateTime?        @db.Timestamptz(6)
+  warmupBarsObserved Int              @default(0)
+  warmupCompletedAt  DateTime?        @db.Timestamptz(6)
+  recoveryEvidence   Json?
+  reason             String?
+  version            Int              @default(0)
+  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+
+  @@index([health])
+  @@map("market_data_states")
+}
+
+model MarketDataAnomalyRecord {
+  id            String    @id @default(uuid()) @db.Uuid
+  symbol        String    @db.VarChar(32)
+  code          String    @db.VarChar(128)
+  severity      String    @db.VarChar(32)
+  detail        String
+  dataTime      DateTime? @db.Timestamptz(6)
+  detectedAt    DateTime  @default(now()) @db.Timestamptz(6)
+  correlationId String?   @db.Uuid
+
+  @@index([symbol, detectedAt])
+  @@index([code, severity])
+  @@map("market_data_anomalies")
+}
+
+model AssetRecord {
+  id              String              @id @db.Uuid
+  symbol          String              @unique @db.VarChar(32)
+  name            String
+  assetClass      String              @db.VarChar(64)
+  exchange        String              @db.VarChar(64)
+  status          String              @db.VarChar(64)
+  tradable        Boolean
+  fractionable    Boolean
+  shortable       Boolean
+  marginable      Boolean
+  attributes      Json
+  brokerUpdatedAt DateTime            @db.Timestamptz(6)
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
+  watchlist       WatchlistRecord?
+  blocks          SymbolBlockRecord[]
+
+  @@index([status, tradable])
+  @@map("assets")
+}
+
+model WatchlistRecord {
+  id        String      @id @default(uuid()) @db.Uuid
+  assetId   String      @unique @db.Uuid
+  active    Boolean     @default(true)
+  metadata  Json?
+  createdAt DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime    @updatedAt @db.Timestamptz(6)
+  asset     AssetRecord @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([active])
+  @@map("watchlist")
+}
+
+model SymbolBlockRecord {
+  id         String      @id @default(uuid()) @db.Uuid
+  assetId    String      @db.Uuid
+  reason     String      @db.VarChar(256)
+  source     String      @db.VarChar(128)
+  blockedAt  DateTime    @default(now()) @db.Timestamptz(6)
+  expiresAt  DateTime?   @db.Timestamptz(6)
+  releasedAt DateTime?   @db.Timestamptz(6)
+  asset      AssetRecord @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId, expiresAt, releasedAt])
+  @@map("symbol_blocks")
+}
+
+model HaltEventRecord {
+  id            String    @id @default(uuid()) @db.Uuid
+  symbol        String    @db.VarChar(32)
+  statusCode    String    @db.VarChar(32)
+  statusMessage String
+  reasonCode    String?   @db.VarChar(32)
+  reasonMessage String?
+  eventTime     DateTime  @db.Timestamptz(6)
+  receivedAt    DateTime  @default(now()) @db.Timestamptz(6)
+  resumedAt     DateTime? @db.Timestamptz(6)
+  luldUpper     Decimal?  @db.Decimal(20, 8)
+  luldLower     Decimal?  @db.Decimal(20, 8)
+  raw           Json
+
+  @@unique([symbol, statusCode, eventTime])
+  @@index([symbol, eventTime])
+  @@map("halt_events")
+}
+
+model CorporateActionRecord {
+  id            String                            @id @db.VarChar(128)
+  type          String                            @db.VarChar(64)
+  state         CorporateActionState
+  symbol        String                            @db.VarChar(32)
+  newSymbol     String?                           @db.VarChar(32)
+  effectiveAt   DateTime                          @db.Timestamptz(6)
+  quantityRatio Decimal?                          @db.Decimal(30, 12)
+  cashAmount    Decimal?                          @db.Decimal(20, 8)
+  raw           Json
+  createdAt     DateTime                          @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime                          @updatedAt @db.Timestamptz(6)
+  adjustments   CorporateActionAdjustmentRecord[]
+
+  @@index([symbol, effectiveAt])
+  @@index([state])
+  @@map("corporate_actions")
+}
+
+model CorporateActionAdjustmentRecord {
+  id         String                @id @default(uuid()) @db.Uuid
+  actionId   String                @db.VarChar(128)
+  entityType String                @db.VarChar(64)
+  entityId   String                @db.VarChar(256)
+  operation  String                @db.VarChar(128)
+  before     Json
+  after      Json
+  createdAt  DateTime              @default(now()) @db.Timestamptz(6)
+  action     CorporateActionRecord @relation(fields: [actionId], references: [id], onDelete: Restrict)
+
+  @@unique([actionId, entityType, entityId, operation])
+  @@index([entityType, entityId])
+  @@map("corporate_action_adjustments")
+}
+
+model MarketEventRecord {
+  id            String      @id @db.VarChar(128)
+  symbol        String?     @db.VarChar(32)
+  type          String      @db.VarChar(64)
+  scheduledAt   DateTime    @db.Timestamptz(6)
+  timing        EventTiming
+  source        String      @db.VarChar(128)
+  sourceVersion String      @db.VarChar(128)
+  raw           Json?
+  createdAt     DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(6)
+
+  @@index([symbol, type, scheduledAt])
+  @@map("market_events")
+}
+
+model EventPolicyApplicationRecord {
+  id                     String   @id @default(uuid()) @db.Uuid
+  policyId               String   @db.VarChar(128)
+  strategyId             String   @db.VarChar(128)
+  symbol                 String   @db.VarChar(32)
+  eventId                String?  @db.VarChar(128)
+  evaluatedAt            DateTime @db.Timestamptz(6)
+  timeToEventMs          BigInt?
+  entryAllowed           Boolean
+  positionSizeMultiplier Decimal  @db.Decimal(8, 6)
+  overnightAllowed       Boolean
+  reasons                Json
+  configurationSnapshot  Json
+  createdAt              DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([strategyId, symbol, evaluatedAt])
+  @@map("event_policy_applications")
+}
+
+model StrategyVersionRecord {
+  id                   String            @id @default(uuid()) @db.Uuid
+  strategyId           String            @db.VarChar(128)
+  version              String            @db.VarChar(64)
+  configurationVersion String            @db.VarChar(128)
+  deploymentId         String            @db.VarChar(128)
+  lifecycle            StrategyLifecycle
+  timeframe            String            @default("1Min") @db.VarChar(16)
+  sessionPolicy        String            @default("REGULAR_ONLY") @db.VarChar(32)
+  overnightPolicy      String            @default("FLAT_AT_CLOSE") @db.VarChar(32)
+  eventRiskPolicy      String            @default("BLOCK_ENTRIES") @db.VarChar(32)
+  commitSha            String?           @db.VarChar(64)
+  buildChecksum        String?           @db.Char(64)
+  parameters           Json
+  requiredIndicators   Json
+  assetOverrides       Json?
+  cooldownMs           Int
+  maximumSignalsPerDay Int
+  maximumTradesPerDay  Int
+  activatedAt          DateTime?         @db.Timestamptz(6)
+  retiredAt            DateTime?         @db.Timestamptz(6)
+  disabledAt           DateTime?         @db.Timestamptz(6)
+  createdAt            DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@unique([strategyId, version])
+  @@index([strategyId, lifecycle])
+  @@index([deploymentId])
+  @@map("strategy_versions")
+}
+
+model StrategySignalRecord {
+  id                    String              @id @db.Uuid
+  symbol                String              @db.VarChar(32)
+  strategyId            String              @db.VarChar(128)
+  strategyVersion       String              @db.VarChar(64)
+  configurationVersion  String              @db.VarChar(128)
+  deploymentId          String              @db.VarChar(128)
+  type                  StrategySignalType
+  state                 StrategySignalState @default(ACTIVE)
+  reason                String
+  confidence            Decimal?            @db.Decimal(8, 6)
+  expectedEdgeBps       Decimal?            @db.Decimal(12, 4)
+  parametersSnapshot    Json
+  configurationSnapshot Json
+  deduplicationKey      String              @unique @db.Char(64)
+  signaledAt            DateTime            @db.Timestamptz(6)
+  expiresAt             DateTime            @db.Timestamptz(6)
+  invalidatedAt         DateTime?           @db.Timestamptz(6)
+  invalidationReason    String?
+  createdAt             DateTime            @default(now()) @db.Timestamptz(6)
+
+  @@index([symbol, signaledAt])
+  @@index([strategyId, strategyVersion, signaledAt])
+  @@index([state, expiresAt])
+  @@map("strategy_signals")
+}
+
+model StrategyPositionBindingRecord {
+  id               String    @id @default(uuid()) @db.Uuid
+  symbol           String    @db.VarChar(32)
+  strategyId       String    @db.VarChar(128)
+  strategyVersion  String    @db.VarChar(64)
+  openedBySignalId String    @db.Uuid
+  active           Boolean   @default(true)
+  boundAt          DateTime  @default(now()) @db.Timestamptz(6)
+  releasedAt       DateTime? @db.Timestamptz(6)
+
+  @@index([symbol, active])
+  @@index([strategyId, strategyVersion, active])
+  @@map("strategy_position_bindings")
+}
+
+model StrategyVersionMigrationRecord {
+  id          String   @id @db.Uuid
+  symbol      String   @db.VarChar(32)
+  strategyId  String   @db.VarChar(128)
+  fromVersion String   @db.VarChar(64)
+  toVersion   String   @db.VarChar(64)
+  reason      String
+  approvedBy  String   @db.VarChar(128)
+  migratedAt  DateTime @db.Timestamptz(6)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([strategyId, symbol, migratedAt])
+  @@map("strategy_version_migrations")
+}
+
+model ScannerExecutionRecord {
+  id               String                 @id @db.Uuid
+  idempotencyKey   String                 @unique @db.VarChar(256)
+  trigger          String                 @db.VarChar(32)
+  status           ScannerExecutionStatus
+  symbolsProcessed Int                    @default(0)
+  symbolsFailed    Int                    @default(0)
+  startedAt        DateTime               @db.Timestamptz(6)
+  finishedAt       DateTime?              @db.Timestamptz(6)
+  durationMs       Int?
+  createdAt        DateTime               @default(now()) @db.Timestamptz(6)
+  results          ScannerResultRecord[]
+
+  @@index([startedAt])
+  @@index([status])
+  @@map("scanner_executions")
+}
+
+model ScannerResultRecord {
+  id              String                 @id @default(uuid()) @db.Uuid
+  executionId     String                 @db.Uuid
+  symbol          String                 @db.VarChar(32)
+  strategyId      String?                @db.VarChar(128)
+  signalId        String?                @db.Uuid
+  accepted        Boolean
+  rank            Int?
+  score           Decimal?               @db.Decimal(16, 8)
+  rejectionCode   String?                @db.VarChar(128)
+  rejectionReason String?
+  createdAt       DateTime               @default(now()) @db.Timestamptz(6)
+  execution       ScannerExecutionRecord @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@index([executionId, accepted, rank])
+  @@index([symbol, createdAt])
+  @@map("scanner_results")
+}
+
+model TaxLotRecord {
+  id                String   @id @db.Uuid
+  symbol            String   @db.VarChar(32)
+  acquisitionFillId String   @db.VarChar(128)
+  acquiredAt        DateTime @db.Timestamptz(6)
+  acquisitionPrice  Decimal  @db.Decimal(20, 8)
+  originalQuantity  Decimal  @db.Decimal(30, 12)
+  remainingQuantity Decimal  @db.Decimal(30, 12)
+  basisPerShare     Decimal  @db.Decimal(20, 8)
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([symbol, acquiredAt])
+  @@index([acquisitionFillId])
+  @@map("tax_lots")
+}
+
+model LotDispositionRecord {
+  id          String   @id @db.Uuid
+  saleFillId  String   @db.VarChar(128)
+  lotId       String   @db.Uuid
+  symbol      String   @db.VarChar(32)
+  soldAt      DateTime @db.Timestamptz(6)
+  quantity    Decimal  @db.Decimal(30, 12)
+  proceeds    Decimal  @db.Decimal(20, 8)
+  costBasis   Decimal  @db.Decimal(20, 8)
+  realizedPnl Decimal  @db.Decimal(20, 8)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([saleFillId])
+  @@index([lotId, soldAt])
+  @@map("lot_dispositions")
+}
+
+model CostBasisAdjustmentRecord {
+  id         String   @id @db.Uuid
+  lotId      String   @db.Uuid
+  reason     String   @db.VarChar(64)
+  amount     Decimal  @db.Decimal(20, 8)
+  detail     String
+  adjustedAt DateTime @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([lotId, adjustedAt])
+  @@map("cost_basis_adjustments")
+}
+
+model WashSaleRecord {
+  id                  String   @id @db.Uuid
+  saleFillId          String   @db.VarChar(128)
+  replacementLotId    String   @db.Uuid
+  symbol              String   @db.VarChar(32)
+  replacementQuantity Decimal  @db.Decimal(30, 12)
+  disallowedLoss      Decimal  @db.Decimal(20, 8)
+  detectedAt          DateTime @db.Timestamptz(6)
+  createdAt           DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([symbol, detectedAt])
+  @@index([saleFillId, replacementLotId])
+  @@map("wash_sales")
+}
+
+model RiskConfigurationRecord {
+  id            String    @id @db.VarChar(256)
+  version       String    @unique @db.VarChar(128)
+  checksum      String    @unique @db.Char(64)
+  configuration Json
+  active        Boolean   @default(false)
+  activatedBy   String?   @db.VarChar(128)
+  supersedesId  String?   @db.VarChar(256)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  activatedAt   DateTime? @db.Timestamptz(6)
+
+  @@index([active])
+  @@map("risk_configurations")
+}
+
+model RiskDecisionRecord {
+  id                  String              @id @db.Uuid
+  signalId            String              @db.Uuid
+  symbol              String              @db.VarChar(32)
+  outcome             RiskDecisionOutcome
+  reasonCodes         Json
+  riskConfigurationId String              @db.VarChar(256)
+  decisionSnapshot    Json
+  evaluatedAt         DateTime            @db.Timestamptz(6)
+  createdAt           DateTime            @default(now()) @db.Timestamptz(6)
+
+  @@index([signalId])
+  @@index([symbol, evaluatedAt])
+  @@index([outcome, evaluatedAt])
+  @@map("risk_decisions")
+}
+
+model SafetyStateRecord {
+  id              String      @id @default("singleton")
+  version         Int         @default(0)
+  tradingMode     TradingMode
+  mode            SafetyMode
+  tradingEnabled  Boolean     @default(false)
+  entriesEnabled  Boolean     @default(false)
+  exitsAllowed    Boolean     @default(true)
+  globalLockOwner String?     @db.VarChar(256)
+  blocks          Json
+  lastChangedAt   DateTime    @db.Timestamptz(6)
+  updatedAt       DateTime    @updatedAt @db.Timestamptz(6)
+
+  @@map("safety_state")
+}
+
+model SafetyAuditRecord {
+  id         String   @id @db.Uuid
+  action     String   @db.VarChar(128)
+  actor      String   @db.VarChar(128)
+  reason     String
+  before     Json
+  after      Json
+  occurredAt DateTime @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([occurredAt])
+  @@index([action, occurredAt])
+  @@map("safety_audit")
+}
+
+model TradeIntentRecord {
+  id                             String           @id @db.Uuid
+  deduplicationKey               String           @unique @db.Char(64)
+  signalId                       String           @db.Uuid
+  symbol                         String           @db.VarChar(32)
+  strategyId                     String           @db.VarChar(128)
+  strategyVersion                String           @db.VarChar(64)
+  state                          TradeIntentState
+  correlationId                  String           @db.Uuid
+  parentIntentId                 String?          @db.Uuid
+  specification                  Json
+  immutableConfigurationSnapshot Json
+  rejectionReasons               Json?
+  createdAt                      DateTime         @db.Timestamptz(6)
+  updatedAt                      DateTime         @updatedAt @db.Timestamptz(6)
+  orders                         OrderRecord[]
+
+  @@unique([signalId, deduplicationKey])
+  @@index([state, updatedAt])
+  @@index([correlationId])
+  @@map("trade_intents")
+}
+
+model OrderRecord {
+  id                String                  @id @db.Uuid
+  tradeIntentId     String                  @db.Uuid
+  clientOrderId     String                  @unique @db.VarChar(64)
+  brokerOrderId     String?                 @unique @db.VarChar(128)
+  symbol            String                  @db.VarChar(32)
+  side              String                  @db.VarChar(8)
+  orderType         String                  @db.VarChar(32)
+  orderClass        String                  @db.VarChar(32)
+  timeInForce       String                  @db.VarChar(16)
+  state             OrderLifecycleState
+  requestedQuantity Decimal                 @db.Decimal(30, 12)
+  filledQuantity    Decimal                 @default(0) @db.Decimal(30, 12)
+  averageFillPrice  Decimal?                @db.Decimal(20, 8)
+  requestedNotional Decimal?                @db.Decimal(20, 8)
+  limitPrice        Decimal?                @db.Decimal(20, 8)
+  stopPrice         Decimal?                @db.Decimal(20, 8)
+  parentOrderId     String?                 @db.Uuid
+  originalOrderId   String?                 @db.Uuid
+  fencingToken      BigInt?
+  brokerResponse    Json?
+  reconciliationDue Boolean                 @default(false)
+  createdAt         DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime                @updatedAt @db.Timestamptz(6)
+  intent            TradeIntentRecord       @relation(fields: [tradeIntentId], references: [id], onDelete: Restrict)
+  transitions       OrderTransitionRecord[]
+  fills             FillRecord[]
+
+  @@index([tradeIntentId])
+  @@index([symbol, state])
+  @@index([parentOrderId])
+  @@index([originalOrderId])
+  @@map("orders")
+}
+
+model OrderTransitionRecord {
+  id           String              @id @default(uuid()) @db.Uuid
+  orderId      String              @db.Uuid
+  sequence     Int
+  fromState    OrderLifecycleState
+  toState      OrderLifecycleState
+  reason       String
+  brokerStatus String?             @db.VarChar(64)
+  occurredAt   DateTime            @db.Timestamptz(6)
+  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
+  order        OrderRecord         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, sequence])
+  @@index([occurredAt])
+  @@map("order_transitions")
+}
+
+model FillRecord {
+  id            String      @id @db.VarChar(128)
+  orderId       String      @db.Uuid
+  tradeIntentId String      @db.Uuid
+  symbol        String      @db.VarChar(32)
+  side          String      @db.VarChar(8)
+  quantity      Decimal     @db.Decimal(30, 12)
+  price         Decimal     @db.Decimal(20, 8)
+  unexpected    Boolean     @default(false)
+  occurredAt    DateTime    @db.Timestamptz(6)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(6)
+  order         OrderRecord @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([tradeIntentId, occurredAt])
+  @@index([symbol, occurredAt])
+  @@map("fills")
+}
+
+model ProtectionGroupRecord {
+  id                String                @id @db.Uuid
+  symbol            String                @db.VarChar(32)
+  positionBindingId String                @unique @db.Uuid
+  state             String                @db.VarChar(32)
+  createdAt         DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime              @updatedAt @db.Timestamptz(6)
+  legs              ProtectionLegRecord[]
+
+  @@index([symbol, state])
+  @@map("protection_groups")
+}
+
+model ProtectionLegRecord {
+  id             String                @id @db.Uuid
+  groupId        String                @db.Uuid
+  brokerOrderId  String?               @unique @db.VarChar(128)
+  role           String                @db.VarChar(32)
+  state          String                @db.VarChar(32)
+  filledQuantity Decimal               @default(0) @db.Decimal(30, 12)
+  createdAt      DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime              @updatedAt @db.Timestamptz(6)
+  group          ProtectionGroupRecord @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, role])
+  @@index([groupId, state])
+  @@map("protection_legs")
+}
+
+model IdempotencyRecord {
+  key           String    @id @db.VarChar(256)
+  operationType String    @db.VarChar(64)
+  entityId      String?   @db.VarChar(128)
+  state         String    @db.VarChar(32)
+  result        Json?
+  ownerId       String?   @db.VarChar(128)
+  fencingToken  BigInt?
+  expiresAt     DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([operationType, state])
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}
+
+model ReconciliationRecord {
+  id                     String                            @id @db.Uuid
+  trigger                String                            @db.VarChar(32)
+  state                  ReconciliationRunState
+  safeCorrectionsApplied Int                               @default(0)
+  startedAt              DateTime                          @db.Timestamptz(6)
+  finishedAt             DateTime?                         @db.Timestamptz(6)
+  brokerSnapshot         Json?
+  localSnapshot          Json?
+  createdAt              DateTime                          @default(now()) @db.Timestamptz(6)
+  discrepancies          ReconciliationDiscrepancyRecord[]
+
+  @@index([state, startedAt])
+  @@map("reconciliations")
+}
+
+model ReconciliationDiscrepancyRecord {
+  id               String               @id @default(uuid()) @db.Uuid
+  reconciliationId String               @db.Uuid
+  code             String               @db.VarChar(128)
+  classification   String               @db.VarChar(32)
+  entityId         String               @db.VarChar(128)
+  localValue       String?
+  brokerValue      String?
+  detail           String
+  resolvedAt       DateTime?            @db.Timestamptz(6)
+  resolution       String?
+  createdAt        DateTime             @default(now()) @db.Timestamptz(6)
+  reconciliation   ReconciliationRecord @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+
+  @@index([reconciliationId, classification])
+  @@index([code, createdAt])
+  @@map("reconciliation_discrepancies")
+}
+
+model RecoveryRecord {
+  id                     String    @id @default(uuid()) @db.Uuid
+  trigger                String    @db.VarChar(32)
+  mode                   String    @db.VarChar(32)
+  actions                Json
+  automaticResumeAllowed Boolean
+  startedAt              DateTime  @db.Timestamptz(6)
+  finishedAt             DateTime? @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([mode, startedAt])
+  @@map("recoveries")
+}
+
+model ManagedPositionRecord {
+  id                    String    @id @db.Uuid
+  symbol                String    @db.VarChar(32)
+  strategyId            String    @db.VarChar(128)
+  strategyVersion       String    @db.VarChar(64)
+  quantity              Decimal   @db.Decimal(30, 12)
+  remainingQuantity     Decimal   @db.Decimal(30, 12)
+  averageEntryPrice     Decimal   @db.Decimal(20, 8)
+  stopLossPrice         Decimal?  @db.Decimal(20, 8)
+  takeProfitPrice       Decimal?  @db.Decimal(20, 8)
+  trailingDistance      Decimal?  @db.Decimal(20, 8)
+  breakEvenTriggerPrice Decimal?  @db.Decimal(20, 8)
+  timeStopAt            DateTime? @db.Timestamptz(6)
+  highWaterPrice        Decimal   @db.Decimal(20, 8)
+  pendingExitIntentId   String?   @db.Uuid
+  allowIncrease         Boolean   @default(false)
+  openedAt              DateTime  @db.Timestamptz(6)
+  closedAt              DateTime? @db.Timestamptz(6)
+  exitReason            String?   @db.VarChar(64)
+  createdAt             DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([symbol, closedAt])
+  @@index([strategyId, strategyVersion, closedAt])
+  @@map("managed_positions")
+}
+
+model SchedulerConfigurationRecord {
+  id             String   @id @db.VarChar(128)
+  intervalMs     Int
+  maximumDriftMs Int
+  lockTtlMs      Int
+  enabled        Boolean  @default(false)
+  active         Boolean  @default(false)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([active])
+  @@map("scheduler_configurations")
+}
+
+model SchedulerStateRecord {
+  id                String            @id @default("singleton")
+  state             SchedulerRunState
+  configurationId   String            @db.VarChar(128)
+  nextExecutionAt   DateTime?         @db.Timestamptz(6)
+  lastExecutionAt   DateTime?         @db.Timestamptz(6)
+  activeExecutionId String?           @db.Uuid
+  workerId          String?           @db.VarChar(128)
+  workerHeartbeatAt DateTime?         @db.Timestamptz(6)
+  lastDriftMs       Int?
+  version           Int               @default(0)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
+
+  @@map("scheduler_state")
+}
+
+model SchedulerExecutionRecord {
+  id             String   @id @db.Uuid
+  idempotencyKey String   @unique @db.VarChar(256)
+  trigger        String   @db.VarChar(32)
+  scheduledFor   DateTime @db.Timestamptz(6)
+  startedAt      DateTime @db.Timestamptz(6)
+  finishedAt     DateTime @db.Timestamptz(6)
+  durationMs     Int
+  result         String   @db.VarChar(32)
+  error          String?
+  candidateCount Int      @default(0)
+  rejectionCount Int      @default(0)
+  errorCount     Int      @default(0)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([startedAt, result])
+  @@map("scheduler_executions")
+}
+
+model CircuitBreakerRecord {
+  key           String    @id @db.VarChar(256)
+  scope         String    @db.VarChar(32)
+  scopeId       String?   @db.VarChar(128)
+  state         String    @db.VarChar(32)
+  failureCount  Int       @default(0)
+  threshold     Int
+  reason        String?
+  openedAt      DateTime? @db.Timestamptz(6)
+  cooldownUntil DateTime? @db.Timestamptz(6)
+  lastFailureAt DateTime? @db.Timestamptz(6)
+  lastSuccessAt DateTime? @db.Timestamptz(6)
+  version       Int       @default(0)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([scope, state])
+  @@index([cooldownUntil])
+  @@map("circuit_breakers")
+}
+
+model WorkerHeartbeatRecord {
+  id          String   @id @db.VarChar(128)
+  kind        String   @db.VarChar(64)
+  status      String   @db.VarChar(32)
+  leader      Boolean  @default(false)
+  startedAt   DateTime @db.Timestamptz(6)
+  heartbeatAt DateTime @db.Timestamptz(6)
+  metadata    Json
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([kind, heartbeatAt])
+  @@map("worker_heartbeats")
+}
+
+model RateLimitBudgetRecord {
+  id              String   @id @db.VarChar(128)
+  tokens          Decimal  @db.Decimal(20, 8)
+  capacity        Decimal  @db.Decimal(20, 8)
+  refillPerSecond Decimal  @db.Decimal(20, 8)
+  lastRefillAt    DateTime @db.Timestamptz(6)
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("rate_limit_budgets")
+}
+
+model MarketClockRecord {
+  id         String   @id @default("singleton")
+  isOpen     Boolean
+  session    String   @db.VarChar(32)
+  brokerTime DateTime @db.Timestamptz(6)
+  nextOpen   DateTime @db.Timestamptz(6)
+  nextClose  DateTime @db.Timestamptz(6)
+  observedAt DateTime @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([observedAt])
+  @@map("market_clock")
+}
+
+model BacktestJobRecord {
+  id          String    @id @db.Uuid
+  status      String    @db.VarChar(32)
+  progress    Int       @default(0)
+  request     Json
+  datasetHash String?   @db.Char(64)
+  runId       String?   @db.Uuid
+  error       String?
+  cancelAt    DateTime? @db.Timestamptz(6)
+  startedAt   DateTime? @db.Timestamptz(6)
+  finishedAt  DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([status, createdAt])
+  @@map("backtest_jobs")
+}
+
+model TradingJournalRecord {
+  id            String   @id @db.Uuid
+  correlationId String   @db.Uuid
+  tradeId       String?  @db.Uuid
+  type          String   @db.VarChar(64)
+  sequence      Int
+  payload       Json
+  occurredAt    DateTime @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([correlationId, sequence])
+  @@index([tradeId, occurredAt])
+  @@index([type, occurredAt])
+  @@map("trading_journal")
+}
+
+model EquityCurvePointRecord {
+  id              String   @id @default(uuid()) @db.Uuid
+  equity          Decimal  @db.Decimal(20, 8)
+  highWaterMark   Decimal  @db.Decimal(20, 8)
+  drawdown        Decimal  @db.Decimal(20, 8)
+  drawdownPercent Decimal  @db.Decimal(10, 6)
+  unrealizedPnl   Decimal  @db.Decimal(20, 8)
+  realizedPnl     Decimal  @db.Decimal(20, 8)
+  capturedAt      DateTime @db.Timestamptz(6)
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([capturedAt])
+  @@map("equity_curve_points")
+}
+
+model ExecutionQualityRecord {
+  id                 String   @id @db.Uuid
+  orderId            String   @unique @db.Uuid
+  symbol             String   @db.VarChar(32)
+  strategyId         String   @db.VarChar(128)
+  orderType          String   @db.VarChar(32)
+  decisionPrice      Decimal  @db.Decimal(20, 8)
+  signalPrice        Decimal  @db.Decimal(20, 8)
+  submissionPrice    Decimal  @db.Decimal(20, 8)
+  arrivalPrice       Decimal  @db.Decimal(20, 8)
+  expectedFillPrice  Decimal  @db.Decimal(20, 8)
+  fillPrice          Decimal? @db.Decimal(20, 8)
+  absoluteSlippage   Decimal? @db.Decimal(20, 8)
+  slippageBps        Decimal? @db.Decimal(12, 4)
+  slippageMoney      Decimal? @db.Decimal(20, 8)
+  spreadBps          Decimal  @db.Decimal(12, 4)
+  volatility         Decimal  @db.Decimal(12, 8)
+  quantity           Decimal  @db.Decimal(30, 12)
+  requestedQuantity  Decimal  @db.Decimal(30, 12)
+  fillRatio          Decimal  @db.Decimal(8, 6)
+  partialFill        Boolean  @default(false)
+  rejected           Boolean  @default(false)
+  canceled           Boolean  @default(false)
+  signalToSubmitMs   Int
+  submitToAcceptedMs Int?
+  acceptedToFillMs   Int?
+  observedAt         DateTime @db.Timestamptz(6)
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([symbol, observedAt])
+  @@index([strategyId, observedAt])
+  @@index([orderType, observedAt])
+  @@map("execution_quality")
+}
+
+model BacktestRunRecord {
+  id                   String                      @id @db.Uuid
+  configurationId      String                      @db.VarChar(128)
+  symbol               String                      @db.VarChar(32)
+  strategyId           String                      @db.VarChar(128)
+  strategyVersion      String                      @db.VarChar(64)
+  configurationVersion String                      @db.VarChar(128)
+  inputConfiguration   Json
+  metrics              Json
+  startedAt            DateTime                    @db.Timestamptz(6)
+  finishedAt           DateTime                    @db.Timestamptz(6)
+  createdAt            DateTime                    @default(now()) @db.Timestamptz(6)
+  trades               BacktestTradeRecord[]
+  equityCurve          BacktestEquityPointRecord[]
+
+  @@index([strategyId, strategyVersion, finishedAt])
+  @@index([symbol, finishedAt])
+  @@map("backtest_runs")
+}
+
+model BacktestTradeRecord {
+  id                   String            @id @db.Uuid
+  backtestRunId        String            @db.Uuid
+  symbol               String            @db.VarChar(32)
+  strategyId           String            @db.VarChar(128)
+  strategyVersion      String            @db.VarChar(64)
+  configurationVersion String            @db.VarChar(128)
+  entrySignalAt        DateTime          @db.Timestamptz(6)
+  enteredAt            DateTime          @db.Timestamptz(6)
+  entryPrice           Decimal           @db.Decimal(20, 8)
+  quantity             Decimal           @db.Decimal(30, 12)
+  exitedAt             DateTime          @db.Timestamptz(6)
+  exitPrice            Decimal           @db.Decimal(20, 8)
+  exitReason           String            @db.VarChar(32)
+  commission           Decimal           @db.Decimal(20, 8)
+  pnl                  Decimal           @db.Decimal(20, 8)
+  holdingMs            BigInt
+  createdAt            DateTime          @default(now()) @db.Timestamptz(6)
+  run                  BacktestRunRecord @relation(fields: [backtestRunId], references: [id], onDelete: Cascade)
+
+  @@index([backtestRunId, enteredAt])
+  @@map("backtest_trades")
+}
+
+model BacktestEquityPointRecord {
+  id              String            @id @default(uuid()) @db.Uuid
+  backtestRunId   String            @db.Uuid
+  timestamp       DateTime          @db.Timestamptz(6)
+  equity          Decimal           @db.Decimal(20, 8)
+  drawdownPercent Decimal           @db.Decimal(10, 6)
+  run             BacktestRunRecord @relation(fields: [backtestRunId], references: [id], onDelete: Cascade)
+
+  @@unique([backtestRunId, timestamp])
+  @@map("backtest_equity_points")
+}
+
+model HealthSnapshotRecord {
+  id          String      @id @default(uuid()) @db.Uuid
+  status      String      @db.VarChar(32)
+  systemState String      @db.VarChar(32)
+  tradingMode TradingMode
+  components  Json
+  checkedAt   DateTime    @db.Timestamptz(6)
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+
+  @@index([status, checkedAt])
+  @@map("health_snapshots")
+}
+
+model MetricSnapshotRecord {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String   @db.VarChar(128)
+  labels     Json
+  value      Decimal  @db.Decimal(30, 10)
+  capturedAt DateTime @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([name, capturedAt])
+  @@map("metric_snapshots")
+}
+
+model AlertRecord {
+  id               String                @id @db.Uuid
+  fingerprint      String                @unique @db.Char(64)
+  kind             String                @db.VarChar(64)
+  severity         AlertSeverity
+  state            AlertState
+  title            String
+  message          String
+  component        String                @db.VarChar(128)
+  correlationId    String?               @db.Uuid
+  metadata         Json
+  occurrences      Int                   @default(1)
+  firstOccurredAt  DateTime              @db.Timestamptz(6)
+  lastOccurredAt   DateTime              @db.Timestamptz(6)
+  nextDeliveryAt   DateTime              @db.Timestamptz(6)
+  deliveryAttempts Int                   @default(0)
+  sentAt           DateTime?             @db.Timestamptz(6)
+  acknowledgedAt   DateTime?             @db.Timestamptz(6)
+  acknowledgedBy   String?               @db.VarChar(128)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(6)
+  deliveryHistory  AlertDeliveryRecord[]
+
+  @@index([state, severity, nextDeliveryAt])
+  @@index([kind, lastOccurredAt])
+  @@map("alerts")
+}
+
+model AlertDeliveryRecord {
+  id          String      @id @default(uuid()) @db.Uuid
+  alertId     String      @db.Uuid
+  channel     String      @db.VarChar(64)
+  attempt     Int
+  outcome     String      @db.VarChar(32)
+  error       String?
+  attemptedAt DateTime    @db.Timestamptz(6)
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+  alert       AlertRecord @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@unique([alertId, channel, attempt])
+  @@index([attemptedAt, outcome])
+  @@map("alert_deliveries")
+}
+
+model RemoteOperationAuditRecord {
+  id         String   @id @db.Uuid
+  actor      String   @db.VarChar(128)
+  channel    String   @db.VarChar(64)
+  action     String   @db.VarChar(64)
+  reason     String
+  outcome    String   @db.VarChar(32)
+  metadata   Json
+  occurredAt DateTime @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([actor, occurredAt])
+  @@index([action, outcome, occurredAt])
+  @@map("remote_operation_audit")
+}
+
+model StrategyDeploymentRecord {
+  id                   String    @id @db.Uuid
+  strategyId           String    @db.VarChar(128)
+  fromVersion          String?   @db.VarChar(64)
+  toVersion            String    @db.VarChar(64)
+  deploymentId         String    @unique @db.VarChar(128)
+  state                String    @db.VarChar(32)
+  actor                String    @db.VarChar(128)
+  reason               String
+  schedulerStateBefore String    @db.VarChar(32)
+  entriesEnabledBefore Boolean
+  failure              String?
+  startedAt            DateTime  @db.Timestamptz(6)
+  finishedAt           DateTime? @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([strategyId, startedAt])
+  @@index([state, startedAt])
+  @@map("strategy_deployments")
+}
+
+model LiveReadinessRecord {
+  id                    String                     @id @db.Uuid
+  state                 LiveReadinessState         @default(NOT_READY)
+  tradingMode           TradingMode
+  environment           String                     @db.VarChar(32)
+  configurationChecksum String                     @db.Char(64)
+  limits                Json
+  failureCodes          Json
+  assessedBy            String                     @db.VarChar(128)
+  assessedAt            DateTime                   @db.Timestamptz(6)
+  expiresAt             DateTime                   @db.Timestamptz(6)
+  activatedAt           DateTime?                  @db.Timestamptz(6)
+  revokedAt             DateTime?                  @db.Timestamptz(6)
+  createdAt             DateTime                   @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime                   @updatedAt @db.Timestamptz(6)
+  checks                LiveReadinessCheckRecord[]
+  activations           LiveActivationRecord[]
+
+  @@index([state, assessedAt])
+  @@map("live_readiness")
+}
+
+model LiveReadinessCheckRecord {
+  id           String              @id @default(uuid()) @db.Uuid
+  assessmentId String              @db.Uuid
+  code         String              @db.VarChar(96)
+  requirement  Int
+  mandatory    Boolean             @default(true)
+  passed       Boolean
+  evidence     String
+  checkedAt    DateTime            @db.Timestamptz(6)
+  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
+  assessment   LiveReadinessRecord @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentId, code])
+  @@index([code, passed, checkedAt])
+  @@map("live_readiness_checks")
+}
+
+model LiveActivationRecord {
+  id                    String              @id @db.Uuid
+  assessmentId          String              @db.Uuid
+  actor                 String              @db.VarChar(128)
+  nonceHash             String              @db.Char(64)
+  outcome               String              @db.VarChar(32)
+  failureCode           String?             @db.VarChar(96)
+  challengeExpiresAt    DateTime            @db.Timestamptz(6)
+  consumedAt            DateTime?           @db.Timestamptz(6)
+  manualMonitoringUntil DateTime?           @db.Timestamptz(6)
+  limits                Json
+  createdAt             DateTime            @default(now()) @db.Timestamptz(6)
+  assessment            LiveReadinessRecord @relation(fields: [assessmentId], references: [id], onDelete: Restrict)
+
+  @@index([assessmentId, outcome, createdAt])
+  @@index([challengeExpiresAt, consumedAt])
+  @@map("live_activations")
+}

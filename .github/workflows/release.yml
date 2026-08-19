@@ -1,0 +1,55 @@
+name: Immutable release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    environment: release
+    strategy:
+      matrix:
+        include:
+          - component: backend
+            context: .
+            file: Dockerfile.backend
+          - component: frontend
+            context: .
+            file: Dockerfile.frontend
+          - component: watchdog
+            context: infra/watchdog
+            file: infra/watchdog/Dockerfile
+          - component: backup
+            context: infra/backup
+            file: infra/backup/Dockerfile
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ghcr.io/${{ github.repository }}/aegis-${{ matrix.component }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}/aegis-${{ matrix.component }}:${{ github.sha }}
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/aegis-${{ matrix.component }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

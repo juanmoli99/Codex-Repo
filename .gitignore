@@ -1,0 +1,37 @@
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+.turbo/
+.vite/
+*.tsbuildinfo
+
+# Runtime configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+secrets/
+
+# Persistent/runtime data
+data/
+logs/
+backups/
+*.log
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
+
+# Test and tool output
+test-results/
+playwright-report/
+frontend/public/runtime-config.json
+work/
+outputs/

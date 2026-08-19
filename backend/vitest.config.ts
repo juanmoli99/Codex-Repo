@@ -1,0 +1,45 @@
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    environment: 'node',
+    testTimeout: 20_000,
+    include: ['src/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary'],
+      include: [
+        'src/backtesting/engine.ts',
+        'src/backtesting/study.ts',
+        'src/core/config.ts',
+        'src/corporate-actions/service.ts',
+        'src/execution/fill-processor.ts',
+        'src/execution/order-state-machine.ts',
+        'src/execution/protection-group.ts',
+        'src/execution/trade-executor.ts',
+        'src/live-readiness/service.ts',
+        'src/market-data/calendar.ts',
+        'src/market-data/validator.ts',
+        'src/portfolio/service.ts',
+        'src/reconciliation/service.ts',
+        'src/risk/config.ts',
+        'src/risk/position-sizing.ts',
+        'src/risk/pre-trade.ts',
+        'src/safety/circuit-breakers.ts',
+        'src/safety/service.ts',
+        'src/security/auth-service.ts',
+        'src/security/crypto.ts',
+        'src/security/totp.ts',
+        'src/strategies/engine.ts',
+        'src/strategies/implementations.ts',
+        'src/tax-lots/book.ts',
+      ],
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        statements: 80,
+        branches: 75,
+      },
+    },
+  },
+});

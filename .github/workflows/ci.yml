@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18.4-alpine3.22
+        env:
+          POSTGRES_DB: aegis_ci
+          POSTGRES_USER: aegis
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U aegis -d aegis_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      CI: true
+      DATABASE_URL: postgresql://aegis:ci-only-password@127.0.0.1:5432/aegis_ci?schema=public
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.20.0 }
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.11.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @aegis/backend db:validate
+      - run: pnpm --filter @aegis/backend db:deploy
+      - run: pnpm verify
+      - run: pnpm test:coverage
+      - run: pnpm audit --audit-level high
+      - name: Build production containers
+        run: |
+          docker build --pull --tag aegis-backend:${GITHUB_SHA} --file Dockerfile.backend .
+          docker build --pull --tag aegis-frontend:${GITHUB_SHA} --file Dockerfile.frontend .
+          docker build --pull --tag aegis-watchdog:${GITHUB_SHA} --file infra/watchdog/Dockerfile infra/watchdog
+          docker build --pull --tag aegis-backup:${GITHUB_SHA} --file infra/backup/Dockerfile infra/backup
+
+  secret-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

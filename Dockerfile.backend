@@ -1,0 +1,33 @@
+FROM node:24.11.1-alpine3.22 AS build
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@11.20.0 --activate
+WORKDIR /build
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY backend/package.json backend/package.json
+COPY packages/shared/package.json packages/shared/package.json
+RUN pnpm install --frozen-lockfile
+
+COPY backend backend
+COPY packages/shared packages/shared
+RUN pnpm --filter @aegis/shared build && pnpm --filter @aegis/backend build
+
+FROM node:24.11.1-alpine3.22 AS runtime
+
+ENV NODE_ENV=production
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@11.20.0 --activate
+WORKDIR /app
+COPY --from=build --chown=node:node /build/package.json /build/pnpm-lock.yaml /build/pnpm-workspace.yaml ./
+COPY --from=build --chown=node:node /build/node_modules ./node_modules
+COPY --from=build --chown=node:node /build/backend ./backend
+COPY --from=build --chown=node:node /build/packages ./packages
+COPY infra/migrate.sh /usr/local/bin/aegis-migrate
+RUN chmod 0555 /usr/local/bin/aegis-migrate
+
+USER node
+EXPOSE 3000
+CMD ["node", "backend/dist/main.js"]

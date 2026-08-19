@@ -1,0 +1,271 @@
+name: ${COMPOSE_PROJECT_NAME:?Use a distinct project name such as aegis-paper or aegis-live}
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  postgres:
+    image: postgres:18.4-alpine3.22
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aegis}
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      TZ: UTC
+      PGTZ: UTC
+    secrets: [postgres_password]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits: { cpus: '2.0', memory: 2G }
+        reservations: { memory: 512M }
+
+  migrate:
+    image: ${AEGIS_BACKEND_IMAGE:?Pin an immutable backend image tag or digest}
+    restart: 'no'
+    command: ['/usr/local/bin/aegis-migrate']
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+    secrets: [database_url]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [data]
+    read_only: true
+    tmpfs: ['/tmp:size=32m,mode=1770']
+    <<: *hardening
+    deploy:
+      resources:
+        limits: { cpus: '1.0', memory: 512M }
+
+  backend:
+    image: ${AEGIS_BACKEND_IMAGE:?Pin an immutable backend image tag or digest}
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_DIRECTORY: /tmp/aegis-logs
+      OPERATOR_TIMEZONE: ${OPERATOR_TIMEZONE:-America/Argentina/Buenos_Aires}
+      MARKET_TIMEZONE: America/New_York
+      BASE_CURRENCY: USD
+      MAX_CLOCK_SKEW_MS: ${MAX_CLOCK_SKEW_MS:-1000}
+      DATABASE_URL_FILE: /run/secrets/database_url
+      TRADING_MODE: ${TRADING_MODE:?TRADING_MODE must be PAPER or LIVE}
+      BROKER_CONNECTIVITY_ENABLED: ${BROKER_CONNECTIVITY_ENABLED:-true}
+      ALPACA_PAPER_BASE_URL: https://paper-api.alpaca.markets
+      ALPACA_LIVE_BASE_URL: https://api.alpaca.markets
+      ALPACA_DATA_BASE_URL: https://data.alpaca.markets
+      ALPACA_DATA_FEED: ${ALPACA_DATA_FEED:-iex}
+      ALPACA_API_KEY_FILE: /run/secrets/alpaca_api_key
+      ALPACA_API_SECRET_FILE: /run/secrets/alpaca_api_secret
+      ENABLE_LIVE_TRADING: ${ENABLE_LIVE_TRADING:-false}
+      LIVE_ACTIVATION_PHRASE: ${LIVE_ACTIVATION_PHRASE:-}
+      SECRETS_PROVIDER: docker-secrets
+      RELEASE_SHA: ${RELEASE_SHA:?RELEASE_SHA is required}
+      DEPLOYMENT_ID: ${DEPLOYMENT_ID:?DEPLOYMENT_ID is required}
+      MARKET_DATA_TIMEFRAME: ${MARKET_DATA_TIMEFRAME:-1Min}
+      MARKET_DATA_MAX_AGE_MS: ${MARKET_DATA_MAX_AGE_MS:-90000}
+      MARKET_DATA_WARMUP_BARS: ${MARKET_DATA_WARMUP_BARS:-60}
+      SCANNER_MAX_SYMBOLS: ${SCANNER_MAX_SYMBOLS:-200}
+      SCANNER_TIMEOUT_MS: ${SCANNER_TIMEOUT_MS:-120000}
+      SCHEDULER_INTERVAL_MS: ${SCHEDULER_INTERVAL_MS:-60000}
+      RECONCILIATION_INTERVAL_MS: ${RECONCILIATION_INTERVAL_MS:-60000}
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-5000}
+      WORKER_DEAD_AFTER_MS: ${WORKER_DEAD_AFTER_MS:-20000}
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:-operator}
+      OPERATOR_PASSWORD_HASH_FILE: /run/secrets/operator_password_hash
+      SESSION_SIGNING_SECRET_FILE: /run/secrets/session_signing_secret
+      CSRF_SIGNING_SECRET_FILE: /run/secrets/csrf_signing_secret
+      OPERATOR_TOTP_SECRET_FILE: /run/secrets/operator_totp_secret
+      SESSION_TTL_MINUTES: ${SESSION_TTL_MINUTES:-30}
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:?Set the exact HTTPS operator origin}
+      MAX_PAYLOAD_BYTES: ${MAX_PAYLOAD_BYTES:-1048576}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
+      LOGIN_LOCK_MINUTES: ${LOGIN_LOCK_MINUTES:-15}
+      TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
+      TELEGRAM_CHAT_ID_FILE: /run/secrets/telegram_chat_id
+    secrets:
+      - database_url
+      - alpaca_api_key
+      - alpaca_api_secret
+      - operator_password_hash
+      - session_signing_secret
+      - csrf_signing_secret
+      - operator_totp_secret
+      - telegram_bot_token
+      - telegram_chat_id
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks:
+      edge:
+        aliases: [backend]
+      data:
+    read_only: true
+    tmpfs: ['/tmp:size=128m,mode=1770']
+    <<: *hardening
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 45s
+    deploy:
+      replicas: 1
+      resources:
+        limits: { cpus: '2.0', memory: 1G }
+        reservations: { memory: 256M }
+
+  frontend:
+    image: ${AEGIS_FRONTEND_IMAGE:?Pin an immutable frontend image tag or digest}
+    restart: unless-stopped
+    depends_on:
+      backend: { condition: service_healthy }
+    ports:
+      - '127.0.0.1:${HTTPS_PORT:-8443}:8443'
+    secrets: [tls_certificate, tls_private_key]
+    networks: [edge]
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1770
+      - /var/cache/nginx:size=32m,mode=1770
+      - /var/run:size=8m,mode=1770
+    <<: *hardening
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'wget -q --no-check-certificate -O - https://127.0.0.1:8443/proxy-health >/dev/null',
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 128M }
+
+  watchdog:
+    image: ${AEGIS_WATCHDOG_IMAGE:?Pin an immutable watchdog image digest}
+    restart: unless-stopped
+    environment:
+      WATCHDOG_URL: http://backend:3000/health/ready
+      WATCHDOG_INTERVAL_SECONDS: ${WATCHDOG_INTERVAL_SECONDS:-15}
+      WATCHDOG_FAILURE_THRESHOLD: ${WATCHDOG_FAILURE_THRESHOLD:-3}
+      WATCHDOG_REMINDER_SECONDS: ${WATCHDOG_REMINDER_SECONDS:-900}
+      TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
+      TELEGRAM_CHAT_ID_FILE: /run/secrets/telegram_chat_id
+    secrets: [telegram_bot_token, telegram_chat_id]
+    depends_on:
+      backend: { condition: service_started }
+    networks: [edge]
+    read_only: true
+    tmpfs: ['/tmp:size=8m,mode=1770']
+    <<: *hardening
+    deploy:
+      resources:
+        limits: { cpus: '0.25', memory: 64M }
+
+  backup:
+    image: ${AEGIS_BACKUP_IMAGE:?Pin an immutable backup image digest}
+    profiles: [backup]
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-aegis}
+      PGUSER: ${POSTGRES_USER:-aegis}
+      PGPASSWORD_FILE: /run/secrets/postgres_password
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_RECORD_RETENTION_DAYS: ${BACKUP_RECORD_RETENTION_DAYS:-2555}
+      BACKUP_PREFIX: ${BACKUP_PREFIX:-aegis}
+      BACKUP_S3_URI: ${BACKUP_S3_URI:?An offsite S3 URI is required for backup}
+      BACKUP_SSE: ${BACKUP_SSE:-AES256}
+      BACKUP_KMS_KEY_ID: ${BACKUP_KMS_KEY_ID:-}
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+    secrets: [postgres_password, aws_access_key_id, aws_secret_access_key]
+    volumes: [backup-staging:/backups]
+    networks: [edge, data]
+    <<: *hardening
+    deploy:
+      resources:
+        limits: { cpus: '1.0', memory: 512M }
+
+networks:
+  edge:
+  data:
+    internal: true
+
+volumes:
+  postgres-data:
+  backup-staging:
+
+secrets:
+  postgres_password:
+    external: true
+    name: ${POSTGRES_PASSWORD_SECRET:?POSTGRES_PASSWORD_SECRET is required}
+  database_url:
+    external: true
+    name: ${DATABASE_URL_SECRET:?DATABASE_URL_SECRET is required}
+  alpaca_api_key:
+    external: true
+    name: ${ALPACA_API_KEY_SECRET:?ALPACA_API_KEY_SECRET is required}
+  alpaca_api_secret:
+    external: true
+    name: ${ALPACA_API_SECRET_SECRET:?ALPACA_API_SECRET_SECRET is required}
+  operator_password_hash:
+    external: true
+    name: ${OPERATOR_PASSWORD_HASH_SECRET:?OPERATOR_PASSWORD_HASH_SECRET is required}
+  session_signing_secret:
+    external: true
+    name: ${SESSION_SIGNING_SECRET_NAME:?SESSION_SIGNING_SECRET_NAME is required}
+  csrf_signing_secret:
+    external: true
+    name: ${CSRF_SIGNING_SECRET_NAME:?CSRF_SIGNING_SECRET_NAME is required}
+  operator_totp_secret:
+    external: true
+    name: ${OPERATOR_TOTP_SECRET_NAME:?OPERATOR_TOTP_SECRET_NAME is required}
+  telegram_bot_token:
+    external: true
+    name: ${TELEGRAM_BOT_TOKEN_SECRET:?TELEGRAM_BOT_TOKEN_SECRET is required}
+  telegram_chat_id:
+    external: true
+    name: ${TELEGRAM_CHAT_ID_SECRET:?TELEGRAM_CHAT_ID_SECRET is required}
+  tls_certificate:
+    external: true
+    name: ${TLS_CERTIFICATE_SECRET:?TLS_CERTIFICATE_SECRET is required}
+  tls_private_key:
+    external: true
+    name: ${TLS_PRIVATE_KEY_SECRET:?TLS_PRIVATE_KEY_SECRET is required}
+  aws_access_key_id:
+    external: true
+    name: ${AWS_ACCESS_KEY_ID_SECRET:-aegis-aws-access-key-id}
+  aws_secret_access_key:
+    external: true
+    name: ${AWS_SECRET_ACCESS_KEY_SECRET:-aegis-aws-secret-access-key}

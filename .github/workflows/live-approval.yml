@@ -1,0 +1,33 @@
+name: Approve LIVE artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_digest:
+        description: Immutable backend image reference ending in @sha256:<64 hex>
+        required: true
+      frontend_digest:
+        description: Immutable frontend image reference ending in @sha256:<64 hex>
+        required: true
+      release_sha:
+        description: Exact 40-character Git commit
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  approve:
+    runs-on: ubuntu-24.04
+    environment: live
+    steps:
+      - name: Validate immutable release coordinates
+        env:
+          BACKEND: ${{ inputs.backend_digest }}
+          FRONTEND: ${{ inputs.frontend_digest }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          [[ "$BACKEND" =~ @sha256:[a-f0-9]{64}$ ]]
+          [[ "$FRONTEND" =~ @sha256:[a-f0-9]{64}$ ]]
+          [[ "$RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+      - run: echo 'Artifact approved for a separately controlled LIVE deployment; no automatic deployment is performed.'

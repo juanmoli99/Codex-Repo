@@ -1,0 +1,39 @@
+{
+  "name": "aegis-trading-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Safety-first algorithmic trading platform for Alpaca",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --filter @aegis/backend --filter @aegis/frontend dev",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings=0",
+    "test": "pnpm -r test",
+    "test:coverage": "pnpm -r test:coverage",
+    "typecheck": "pnpm --filter @aegis/shared build && pnpm --parallel --filter @aegis/backend --filter @aegis/frontend typecheck",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "db:generate": "pnpm --filter @aegis/backend db:generate",
+    "db:migrate": "pnpm --filter @aegis/backend db:migrate",
+    "db:deploy": "pnpm --filter @aegis/backend db:deploy",
+    "db:validate": "pnpm --filter @aegis/backend db:validate",
+    "check:clock": "node --import tsx scripts/check-clock.ts",
+    "backtest:validate": "node --import tsx scripts/validate-backtest-study.ts",
+    "load:smoke": "node --import tsx scripts/load-smoke.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.10.4",
+    "eslint": "10.8.1",
+    "globals": "17.3.0",
+    "prettier": "3.9.6",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0"
+  }
+}
