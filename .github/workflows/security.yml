@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: aquasecurity/trivy-action@0.35.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -59,7 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: docker build --pull --tag aegis-${{ matrix.component }}:security --file ${{ matrix.file }} ${{ matrix.context }}
-      - uses: aquasecurity/trivy-action@0.35.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: aegis-${{ matrix.component }}:security
           format: table
