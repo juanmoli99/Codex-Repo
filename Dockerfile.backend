@@ -1,4 +1,4 @@
-FROM node:24.11.1-alpine3.22 AS build
+FROM node:26.3.0-alpine3.22 AS build
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -14,7 +14,7 @@ COPY backend backend
 COPY packages/shared packages/shared
 RUN pnpm --filter @aegis/shared build && pnpm --filter @aegis/backend build
 
-FROM node:24.11.1-alpine3.22 AS runtime
+FROM node:26.3.0-alpine3.22 AS runtime
 
 ENV NODE_ENV=production
 ENV PNPM_HOME=/pnpm
